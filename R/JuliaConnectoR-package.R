@@ -1,0 +1,170 @@
+#' A Functionally Oriented Interface for Integrating Julia with R
+#'
+#' This package provides a functionally oriented interface between R and Julia.
+#' The goal is to call functions from Julia packages directly as R functions.
+#'
+#' This R-package provides a functionally oriented interface between R and Julia.
+#' The goal is to call functions from Julia packages directly as R functions.
+#' Julia functions imported via the \pkg{JuliaConnectoR} can accept and return R variables.
+#' It is also possible to pass R functions as arguments in place of Julia functions,
+#' which allows \emph{callbacks} from Julia to R.
+#'
+#
+#' From a technical perspective, R data structures are serialized with an optimized custom streaming format,
+#' sent to a (local) Julia TCP server, and translated to Julia data structures by Julia.
+#' The results are returned back to R.
+#' Simple objects, which correspond to vectors in R, are directly translated.
+#' Complex Julia structures are by default transferred to R by reference via proxy objects.
+#' This enables an effective and intuitive handling of the Julia objects via R.
+#' It is also possible to fully translate Julia objects to R objects.
+#' These translated objects are annotated with information
+#' about the original Julia objects, such that they can be translated back to Julia.
+#' This makes it also possible to serialize them as R objects.
+#'
+#'
+#' @section Setup:
+#' The package requires that
+#' \href{https://julialang.org/downloads/}{Julia (Version \eqn{\geq}{>=} 1.0) is installed}
+#' and that the Julia executable is in the system search \env{PATH} or that the
+#' \env{JULIA_BINDIR} environment variable is set to the \code{bin} directory of
+#' the Julia installation.
+#'
+#'
+#' @section Function overview:
+#' The function \code{\link{juliaImport}} makes
+#' functions and data types from Julia packages or modules available as R functions.
+#'
+#' If only a single Julia function needs to be importedR, \code{\link{juliaFun}}
+#' can do this. The simplest way to call a Julia function without any importing
+#' is to use \code{\link{juliaCall}} with the function name given
+#' as character string.
+#'
+#' For evaluating expressions in Julia, \code{\link{juliaEval}} and
+#' \code{\link{juliaLet}} can be used. With \code{\link{juliaLet}} one can use
+#' R variables in a expression.
+#'
+#' \code{\link{juliaExpr}} makes it possible use complex Julia syntax in R via R strings
+#' that contain Julia expressions.
+#'
+#' With \code{\link{juliaGet}}, a full translation of a Julia proxy object into an R object
+#' is performed.
+#'
+#' \code{as.data.frame} is overloaded (\code{\link{as.data.frame.JuliaProxy}})
+#' for translating Julia objects that implement the
+#' \href{https://github.com/JuliaData/Tables.jl}{\code{Tables}} interface
+#' to R data frames.
+#
+#' @section Translation:
+#'
+#' Since Julia is more type-sensitive than R, and many Julia functions expect to be called
+#' using specific types, it is important to know the translations of the R data structures
+#' to Julia.
+#'
+#' \subsection{Translation from R to Julia}{
+#' The type correspondences of the basic R data types in Julia are the following:
+#'
+#' \tabular{lcl}{
+#' \strong{R} \tab  \tab \strong{Julia}\cr
+#' \code{integer} \tab \eqn{\rightarrow}{-->} \tab \code{Int} \cr
+#' \code{double}  \tab \eqn{\rightarrow}{-->} \tab \code{Float64} \cr
+#' \code{logical}   \tab \eqn{\rightarrow}{-->} \tab \code{Bool} \cr
+#' \code{character} \tab \eqn{\rightarrow}{-->} \tab \code{String} \cr
+#' \code{complex} \tab \eqn{\rightarrow}{-->} \tab \code{Complex{Float64}} \cr
+#' \code{raw}  \tab \eqn{\rightarrow}{-->} \tab \code{UInt8} \cr
+#' \code{symbol} \tab \eqn{\rightarrow}{-->} \tab \code{Symbol} \cr
+#' }
+#'
+#' R vectors of length 1 of the types in the table above will be translated to the types shown.
+#'
+#' R vectors or arrays with more than one element will be translated to Julia \code{Array}s
+#' of the corresponding types. The dimensions of an R array, as returned by \code{dim()},
+#' will also be respected.
+#' For example, the R integer vector \code{c(1L, 2L)} will be of type \code{Vector{Int}},
+#' or \code{Array{Int,1}}, in Julia.
+#' A double matrix such as \code{matrix(c(1,2,3,4), nrow = 2)}
+#' will be of type \code{Array{Float64,2}}.
+#'
+#' Missing values (\code{NA}) in R are translated to \code{missing} values in Julia.
+#' R vectors and arrays with missing values are converted to Julia arrays
+#' of type \code{Array{Union{Missing, T}}}, where \code{T} stands for the translated 
+#' type in the table above.
+#'
+#' R lists are translated as \code{Vector{T}} in Julia, with \code{T} being
+#' the most specific supertype of the list elements after translation to Julia.
+#'
+#' An R function that is handed to Julia as argument in a function
+#' call is translated to a Julia callback function that will call the given R function.
+#'
+#' Strings with attribute \code{"JLEXPR"}
+#' will be evaluated as Julia expressions,
+#' and the value is used in their place (see \code{\link{juliaExpr}}).
+#'
+#' R data frames are translated to objects that implement the Julia
+#' \href{https://github.com/JuliaData/Tables.jl}{\code{Tables}} interface.
+#' Such objects can be used by functions of many different
+#' Julia packages that deal with table-like data structures.
+#'
+#' }
+#'
+#' \subsection{Translation from Julia to R}{
+#' The type system of Julia is richer than that of R. Therefore, to be able to turn
+#' the Julia data structures that have been translated to R back to the original Julia
+#' data structures, the original Julia types are added to the translated Julia objects
+#' in R via the attribute \code{"JLTYPE"}.
+#' When passed to Julia, R variables with this
+#' attribute will be coerced to the respective type.
+#' This allows the reconstruction of the objects
+#' with their original type.
+#'
+#' It should not be necessary to worry too much
+#' about the translations from Julia to R because the resulting R objects should be
+#' intuitive to handle.
+#'
+#' The following table shows how basic R-compatible types of Julia are translated to R:
+#' \tabular{lcl}{
+#' \strong{Julia} \tab  \tab \strong{R} \cr
+#'  \code{Float64}\tab \eqn{\rightarrow}{-->} \tab\code{double} \cr
+#'  \code{Float16}, \code{Float32}, \code{UInt32} \tab \eqn{\rightarrow}{-->} \tab\code{double} with type attribute \cr
+#'  \code{Int64} that fits in 32 bits \tab \eqn{\rightarrow}{-->} \tab \code{integer} \cr
+#'  \code{Int64} not fitting in 32 bits \tab \eqn{\rightarrow}{-->} \tab \code{double} with type attribute \cr
+#'  \code{Int8}, \code{Int16}, \code{UInt16}, \code{Int32}, \code{Char} \tab \eqn{\rightarrow}{-->} \tab\code{integer} with type attribute \cr
+#'  \code{UInt8}\tab \eqn{\rightarrow}{-->} \tab\code{raw} \cr
+#'  \code{UInt64}, \code{Int128}, \code{UInt128}, \code{Ptr} \tab \eqn{\rightarrow}{-->} \tab\code{raw} with type attribute \cr
+#'  \code{Complex{Float64}}\tab \eqn{\rightarrow}{-->} \tab\code{complex} \cr
+#'  \code{Complex{Int\var{X}}} with \var{X} \eqn{\leq}{<=} 64 \tab \eqn{\rightarrow}{-->} \tab\code{complex} with type attribute \cr
+#'  \code{Complex{Float\var{X}}} with \var{X} \eqn{\leq}{<=} 32 \tab \eqn{\rightarrow}{-->} \tab\code{complex} with type attribute \cr
+#' }
+#'
+#' Julia \code{Array}s of these types are translated to \code{vector}s or \code{array}s of the corresponding types in R.
+#'
+#'
+#' Julia functions are translated to R functions that call the Julia function.
+#' These functions can also be translated back to the
+#' corresponding Julia functions when used as argument of another function
+#' (see \code{\link{juliaFun}}).
+#'
+#'
+#' Julia object of other types, in particular \code{struct}s, \code{Tuple}s, \code{NamedTuple}s,
+#' and \code{AbstractArray}s of other types are transferred by reference in the form of proxy objects.
+#' Elements and properties of these proxy objects can be accessed and mutated via the operators \code{`[[`},
+#' \code{`[`}, and \code{`$`} (see \link{AccessMutate.JuliaProxy}).
+#'
+#' A full translation of the proxy objects into R objects, which also allows saving these objects in R,
+#' is possible via \code{\link{juliaGet}}.
+#'
+#'
+#' }
+#'
+#' @section Limitations:
+#'
+#' Numbers of type \code{Int64} that are too big to be expressed as 32-bit
+#' \code{integer} values in R will be translated to \code{double} numbers.
+#' This may lead to a inaccurate results for very large numbers,
+#' when they are translated back to Julia, since, e. g.,
+#' \code{(2^53 + 1) - 2^53 == 0} holds for double-precision
+#' floating point numbers.
+#'
+#'
+#' @docType package
+#' @name JuliaConnectoR-package
+NULL
