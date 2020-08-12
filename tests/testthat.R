@@ -5,4 +5,3 @@ library(utils)
 if (juliaSetupOk()) {
    test_check("JuliaConnectoR")
 }
-

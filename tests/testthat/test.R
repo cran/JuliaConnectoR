@@ -948,7 +948,12 @@ test_that("Error if Julia is not setup properly", {
    oldJuliaBindir <- Sys.getenv("JULIA_BINDIR")
    Sys.setenv("JULIA_BINDIR" = "/this/isnot/a/directory/")
    expect_error(JuliaConnectoR:::runJuliaServer(16752), "No Julia executable file found")
-   Sys.setenv("JULIA_BINDIR" = oldJuliaBindir)
+   if (oldJuliaBindir == "") {
+      Sys.unsetenv("JULIA_BINDIR")
+   } else {
+      Sys.setenv("JULIA_BINDIR" = oldJuliaBindir)
+   }
+   expect_equal(1, juliaEval("1"))
 })
 
 
@@ -1096,7 +1101,7 @@ test_that("AbstractArrays are transferred by reference and can be translated to 
 
 
 test_that("Boltzmann machine can be trained and used", {
-   skip_on_cran()
+   #skip_on_cran()
 
    juliaEval('using Pkg;
               try
@@ -1152,6 +1157,16 @@ test_that("juliaPut", {
    expect_s3_class(juliaPut(x), "JuliaArrayProxy")
 })
 
+
+test_that("Display of default printing is limited to width", {
+   x <- juliaEval("rand(100, 100)")
+   y <- juliaPut(x)
+   printOutput <- capture.output({print(y)})
+   expect_lte(nchar(printOutput[length(printOutput)]),
+              getOption("width"))
+})
+
+
 test_that("Error message for tables", {
    capture.output({JuliaConnectoR:::showUpdateTablesMsg()})
 
@@ -1203,17 +1218,39 @@ test_that("Julia types are converted to r compatible types in data frames", {
 })
 
 
+test_that("Broadcasting via dot syntax works", {
+   expect_equal(juliaCall("sin.", c(0, 1/3*pi, pi/2)),
+                c(0, sqrt(3)/2, 1))
+   juliaEval("import Statistics")
+   arrofarrs <- juliaEval("[[2;3], [4;5]]")
+   expect_equal(juliaCall("Statistics.mean.", arrofarrs), c(2.5, 4.5))
+   expect_equal(juliaGet(juliaCall("Statistics.mean.", arrofarrs, dims = 1L)),
+                juliaGet(juliaEval("[[2.5], [4.5]]")))
+})
+
+
 test_that("Examples from README work", {
-   skip_on_cran()
    skip_if(Sys.info()["login"] %in% c("lenz", "selectstern"))
    cat("\nExecuting README examples...\n")
-   irisExampleJl <- system.file("examples", "iris-example.jl",
+
+   if (grepl("^1\\.0", juliaEval('string(VERSION)'))) {
+      skip_on_travis()
+   } else {
+      projectFolder <- "project_1_4"
+   }
+
+   Pkg <- juliaImport("Pkg")
+   Pkg$activate(system.file("examples", "iris-example", projectFolder,
+                            package = "JuliaConnectoR", mustWork = TRUE))
+   Pkg$instantiate()
+   Pkg$build()
+
+   irisExampleJl <- system.file("examples", "iris-example", "iris-example.jl",
                                 package = "JuliaConnectoR", mustWork = TRUE)
    irisExampleJuliaCode <- readLines(irisExampleJl)
    irisExampleJuliaCode <- sub("epochs <-.*", "epochs <- 5", irisExampleJuliaCode)
    juliaEval(paste(irisExampleJuliaCode, collapse = "\n"))
-
-   irisExampleR <- system.file("examples", "iris-example.R",
+   irisExampleR <- system.file("examples",  "iris-example", "iris-example.R",
                                package = "JuliaConnectoR", mustWork = TRUE)
    irisExampleRCode <- readLines(irisExampleR)
    irisExampleRCode <- sub("epochs <-.*", "epochs <- 5", irisExampleRCode)
@@ -1223,14 +1260,32 @@ test_that("Examples from README work", {
    # just test something
    expect_s3_class(scriptEnv$model, "JuliaProxy")
 
+   Pkg$activate() # use default environment again
+})
 
+
+
+test_that("Boltzmann example from README works", {
+   returningError <- function(x) {
+      paste0("tryCatch({", x , '},',
+             'error = function(e) { paste("e: ",e$message) },',
+             'warning = function(w) { paste("w: ", w$message) })')
+   }
+
+   juliaEval('import Pkg;
+            try
+               @eval import BoltzmannMachines
+            catch ex
+               Pkg.add(PackageSpec(name = "BoltzmannMachines", version = v"1.2"))
+            end')
    boltzmannExampleR <- system.file("examples", "boltzmann-example.R",
                                      package = "JuliaConnectoR", mustWork = TRUE)
    bmExample <- readLines(boltzmannExampleR)
    bmExample <- sub("plot\\(.*", "", bmExample)
    bmScriptEnv <- new.env(emptyenv())
-   eval(parse(text = paste(bmExample, collapse = "\n")),
-        envir = bmScriptEnv)
+   code <- paste(bmExample, collapse = "\n")
+   code <- returningError(code)
+   eval(parse(text = code), envir = bmScriptEnv)
    expect_s3_class(bmScriptEnv$dbm, "JuliaProxy")
 })
 
