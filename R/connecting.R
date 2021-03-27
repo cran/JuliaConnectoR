@@ -48,7 +48,9 @@ runJuliaServer <- function(port = 11980) {
 
    # start Julia server in background
    juliaexe <- getJuliaExecutablePath()
-   system2(juliaexe, c(mainJuliaFile, port, portfilename), wait = FALSE,
+   system2(command = juliaexe,
+           args = c(shQuote(mainJuliaFile), port, shQuote(portfilename)),
+           wait = FALSE,
            stdout = stdoutfile, stderr = stderrfile)
 
    # get information about the real port from the temporary file
@@ -58,6 +60,8 @@ runJuliaServer <- function(port = 11980) {
       Sys.sleep(sleepTime)
       timeSlept <- timeSlept + sleepTime
       if (timeSlept >= 50) {
+         try({cat(paste(readLines(stderrfile), collapse = "\n"),
+                  file = stderr())})
          stop("Timeout while waiting for response from Julia server")
       }
    }
@@ -72,6 +76,8 @@ runJuliaServer <- function(port = 11980) {
 #' Check Julia setup
 #'
 #' Checks that Julia can be started and that the Julia version is at least 1.0.
+#' For more information about the setup and discovery of Julia,
+#' see \link{JuliaConnectoR-package}, section "Setup".
 #'
 #' @return \code{TRUE} if the Julia setup is OK; otherwise \code{FALSE}
 juliaSetupOk <- function() {
@@ -166,7 +172,7 @@ ensureJuliaConnection <- function() {
       if (juliaEval("isdefined(Tables, :JuliaConnectoR_DummyTables)")) {
          message("Package \"Tables.jl\" (version >= 1.0) is required. Installing ...")
          # Add Tables package and trigger precompilation:
-         # For Importing/precompilation use the Temp module 
+         # For Importing/precompilation use the Temp module
          # because Tables is already defined in the Main module.
          tryCatch({juliaEval('import Pkg; Pkg.add("Tables");
             module Temp
@@ -208,7 +214,10 @@ killJuliaWindows <- function(juliaPort) {
 # should work on Linux, MacOS and FreeBSD
 killJuliaUnix <- function(juliaPort) {
    lsofArgs <- paste0("-t -iTCP:", juliaPort, " -sTCP:LISTEN")
-   juliaPid <- system2(command = "lsof", args = lsofArgs, stdout = TRUE)
+   suppressWarnings({
+      # there may be a warning if Julia has already been stopped
+      juliaPid <- system2(command = "lsof", args = lsofArgs, stdout = TRUE
+   )})
    if (length(juliaPid) == 1) {
       system2(command = "kill", c("-9", juliaPid))
    }

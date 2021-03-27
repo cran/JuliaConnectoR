@@ -33,6 +33,11 @@ The package requires that
 and that the Julia executable is in the system search \env{PATH} or that the
 \env{JULIA_BINDIR} environment variable is set to the \code{bin} directory of
 the Julia installation.
+If the \env{JULIA_BINDIR} variable is set, it takes precedence over
+looking in the executable path.
+By setting the \env{JULIA_BINDIR} variable before starting Julia,
+it is therefore possible to use different installations of Julia on the
+same machine without having to change the executable path.
 }
 
 \section{Function overview}{
@@ -40,7 +45,7 @@ the Julia installation.
 The function \code{\link{juliaImport}} makes
 functions and data types from Julia packages or modules available as R functions.
 
-If only a single Julia function needs to be importedR, \code{\link{juliaFun}}
+If only a single Julia function needs to be imported in R, \code{\link{juliaFun}}
 can do this. The simplest way to call a Julia function without any importing
 is to use \code{\link{juliaCall}} with the function name given
 as character string.
@@ -94,7 +99,7 @@ will be of type \code{Array{Float64,2}}.
 
 Missing values (\code{NA}) in R are translated to \code{missing} values in Julia.
 R vectors and arrays with missing values are converted to Julia arrays
-of type \code{Array{Union{Missing, T}}}, where \code{T} stands for the translated 
+of type \code{Array{Union{Missing, T}}}, where \code{T} stands for the translated
 type in the table above.
 
 R lists are translated as \code{Vector{T}} in Julia, with \code{T} being
@@ -166,12 +171,32 @@ is possible via \code{\link{juliaGet}}.
 
 \section{Limitations}{
 
-
+\subsection{Possible inexactness when dealing with large 64 bit integers}{
 Numbers of type \code{Int64} that are too big to be expressed as 32-bit
 \code{integer} values in R will be translated to \code{double} numbers.
 This may lead to a inaccurate results for very large numbers,
 when they are translated back to Julia, since, e. g.,
 \code{(2^53 + 1) - 2^53 == 0} holds for double-precision
 floating point numbers.
+}
+
+\subsection{Non-ASCII characters in variable names}{
+Julia uses UTF-8 as default string encoding everywhere.
+In particular, Julia permits characters that are not
+expressible in encodings such as "Latin-1" in variable and function names.
+In R, the encoding of names in lists of environments depends on the platform.
+On locales without UTF-8 as native encoding, (i.e., mostly Windows),
+unexpected translations may happen when using UTF-8 characters in strings.
+
+When using \code{\link{juliaImport}} for importing packages/modules,
+alternative names for variables using non-ASCII characters are added,
+which are compatible across different encodings.
+(For more information, see \code{\link{juliaImport}}.)
+
+In other places, such as when evaluating code via \code{\link{juliaEval}} and
+\code{\link{juliaLet}}, the problem cannot be addressed.
+It should therefore be avoided to use non-ASCII characters
+if code should be portable across different platforms.
+}
 }
 

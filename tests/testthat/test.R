@@ -228,6 +228,32 @@ test_that("Echo: Double vector with missing values", {
 })
 
 
+test_that("NaN and NA are handled differently", {
+   # NaN in R is translated to a NaN Float64 value in Julia
+   # NA in R is translated to a missing value in Julia
+
+   x <- juliaEval("[1; missing; NaN]")
+   expect_equal(x[1], 1)
+   expect_true(is.na(x[2]) && !is.nan(x[2]))
+   expect_true(is.nan(x[3]))
+
+   y <- juliaEcho(x)
+   expect_equal(y[1], 1)
+   expect_true(is.na(y[2]) && !is.nan(y[2]))
+   expect_true(is.nan(y[3]))
+
+   expect_equal(juliaCall("typeof", c(1, NA)),
+                juliaEval("Array{Union{Float64,Missing},1}"))
+   expect_equal(juliaCall("typeof", c(1, NaN)),
+                juliaEval("Array{Float64,1}"))
+
+   expect_equal(juliaCall("typeof", c(1+1i, NA)),
+                juliaEval("Array{Union{Complex{Float64},Missing},1}"))
+   expect_equal(juliaCall("typeof", c(1+1i, NaN)),
+                juliaEval("Array{Complex{Float64},1}"))
+})
+
+
 test_that("Missing values transferred as NA", {
    expect_true(is.na(juliaEval("missing")))
    expect_true(all(is.na(juliaEval("[missing; missing]"))))
@@ -283,14 +309,14 @@ test_that("Echo: Ref", {
 })
 
 
-test_that("Complex are handled first class", {
+test_that("Complex values are handled first class", {
    testEcho(1i)
    testEcho(juliaEval("1+im"))
    testEcho(juliaEval("[1+im]"))
    testEcho(juliaEval("[1+im; 2+im]"))
    testEcho(c(1+1i,2 + 2i))
 
-   jla <- juliaImport("LinearAlgebra")
+   suppressWarnings({jla <- juliaImport("LinearAlgebra")})
    testEcho(matrix(c(1, 0, 0, -1), ncol = 2))
    expect(all(jla$eigvals(matrix(c(1, 0, 0, -1), ncol = 2),
                    matrix(c(0, 1, 1, 0), ncol = 2)) %in% c(1i, -1i)),
@@ -308,7 +334,8 @@ test_that("Complex are handled first class", {
       if (complexPar == "Float64") {
          expect_null(attr(c, "JLTYPE"))
       } else {
-         expect_equal(attr(c, "JLTYPE"), juliaComplexType)
+         expect_true(juliaCall("==", juliaEval(attr(c, "JLTYPE")),
+                               juliaEval(juliaComplexType)))
       }
    }
 })
@@ -729,6 +756,27 @@ test_that("Private inner constructor is forged", {
 })
 
 
+test_that("Imported modules are printed", {
+   # a stdlib module
+   Pkg <- juliaImport("Pkg")
+   expect_match(regexp = 'Julia module "Pkg": [0-9]+ function.*',
+                capture.output(print(Pkg))[1])
+
+   # a user defined module
+   module <- juliaEval('module ImportTestModule1
+               export f
+               f(x)=1
+             end')
+   itm1 <- juliaImport(module, all = FALSE)
+   expectedOutput <-
+      'Julia module "Main.ImportTestModule1": 1 function.*'
+   expect_match(capture.output(print(itm1))[1], regexp = expectedOutput)
+
+   itm1_2 <- juliaImport(".ImportTestModule1", all = FALSE)
+   expect_match(capture.output(print(itm1_2))[1], regexp = expectedOutput)
+})
+
+
 test_that("Empty module does not cause problems", {
    juliaEval("module EmptyTestModule end")
    expect_length(ls(juliaImport(".EmptyTestModule")), 2) # (eval and include)
@@ -951,7 +999,11 @@ test_that("JULIACONNECTOR_SERVER environment variable and Killing Julia works", 
    expect_equal(juliaCall("prod", c(1,2)), 2)
    # test killing
    JuliaConnectoR:::killJulia()
-   Sys.setenv("JULIACONNECTOR_SERVER" = oldJuliaConnectorServer)
+   if (oldJuliaConnectorServer == "") {
+      Sys.unsetenv("JULIACONNECTOR_SERVER")
+   } else {
+      Sys.setenv("JULIACONNECTOR_SERVER" = oldJuliaConnectorServer)
+   }
 })
 
 
@@ -1111,6 +1163,14 @@ test_that("AbstractArrays are transferred by reference and can be translated to 
 })
 
 
+test_that("Operators can be imported and used", {
+   suppressWarnings({jla <- juliaImport("LinearAlgebra", all = FALSE)})
+   expect_equal(jla$`<cdot>`(1,2), 2)
+   suppressWarnings({base <- juliaImport("Base", all = FALSE)})
+   expect_true(base$`<subseteq>`(c(1,2), c(1,2,3)))
+})
+
+
 test_that("Boltzmann machine can be trained and used", {
    #skip_on_cran()
 
@@ -1241,7 +1301,8 @@ test_that("Broadcasting via dot syntax works", {
 
 
 test_that("Examples from README work", {
-   skip_if(Sys.info()["login"] %in% c("lenz", "selectstern"))
+   skip_on_cran()
+   skip_if(Sys.info()["login"] %in% c("lenz", "Stefan Lenz", "selectstern"))
    cat("\nExecuting README examples...\n")
 
    if (grepl("^1\\.0", juliaEval('string(VERSION)'))) {

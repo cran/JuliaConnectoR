@@ -3,7 +3,8 @@ struct Fail
 end
 
 function Fail(msg, origex)
-   Fail(msg * "\nOriginal error:\n" * sprint(showerror, origex, backtrace()))
+   Fail(msg * "\nOriginal Julia error message:\n" *
+         sprint(showerror, origex, backtrace()))
 end
 
 
@@ -44,6 +45,18 @@ struct Call
 end
 
 
+function isbitsequal(x)
+   y -> x .=== y
+end
+
+
+# replace `value` in `x` with `replacement`
+# but use === comparison instead of == as the normal replace does
+function replace_bitsequal(x, val, replacement)
+   [(x[i] === val ? replacement : x[i]) for i in eachindex(x)]
+end
+
+
 function read_attributes(communicator)
    nattributes = read_nattributes(communicator)
    attributes = Dict{String, Any}()
@@ -63,8 +76,8 @@ end
 function read_complexs_with_missings(communicator, n::Int)
    doublepairs = reinterpret(Float64, read_bin(communicator, 16*n))
    ret = map(i -> Complex{Float64}(doublepairs[2*i - 1], doublepairs[2*i]), 1:n)
-   if any(isequal(R_NA_COMPLEX), ret)
-      return replace(ret, R_NA_COMPLEX => missing)
+   if any(isbitsequal(R_NA_COMPLEX), ret)
+      return replace_bitsequal(ret, R_NA_COMPLEX, missing)::Array{Union{Complex{Float64},Missing},1}
    else
       return ret
    end
@@ -78,8 +91,8 @@ end
 
 function read_float64s_with_missings(communicator, n::Int)
    ret = read_float64s(communicator, n)
-   if any(isequal(R_NA_REAL), ret)
-      return replace(ret, R_NA_REAL => missing)
+   if any(isbitsequal(R_NA_REAL), ret)
+      return replace_bitsequal(ret, R_NA_REAL, missing)::Array{Union{Float64,Missing},1}
    else
       return ret
    end
