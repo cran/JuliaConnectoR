@@ -17,7 +17,7 @@ juliaConnection <- function() {
                                          open="r+b", timeout = 10)))
    }
 
-   port <- runJuliaServer()
+   port <- runJuliaServer(multiclient = FALSE)
 
    return(list(port = port,
                con = socketConnection(host = "localhost",
@@ -28,12 +28,116 @@ juliaConnection <- function() {
 }
 
 
+getJuliaEnv <- function() {
+   jlenv <- character()
+   if (Sys.getenv("JULIACONNECTOR_JULIAENV") != "") {
+      if (Sys.info()['sysname'] == "Windows") {
+         warning("Setting \"JULIACONNECTOR_JULIAENV\" not supported on Windows")
+      } else {
+         envdef <- Sys.getenv("JULIACONNECTOR_JULIAENV")
+         evalenv <- new.env(emptyenv())
+         eval(expr = parse(text = envdef), envir = evalenv)
+         # system2 expects a character vector of name=value strings
+         jlenv <- unlist(lapply(names(evalenv),
+                         function(x) { paste0(x, "=", evalenv[[x]]) }))
+      }
+   }
+   return(jlenv)
+}
+
+
+
+#' Start a Julia server that may serve multiple clients (R processes)
+#'
+#' Starting a Julia server allows that different R processes may connect to the
+#' the same Julia server and share a single session.
+#' This can be useful for saving start-up/precompilation time when starting
+#' additional processes or when sharing global variables between processes.
+#' \emph{For the standard way of starting Julia, this function is not needed.
+#' It is also not needed if child processes should use separate Julia sessions.}
+#'
+#' The functions communicates the server address via setting the
+#' \env{JULIACONNECTOR_SERVER} environment variable.
+#' A possible value for the variable is "localhost:11980".
+#' The \env{JULIACONNECTOR_SERVER} variable is communicated automatically via
+#' the system environment to child processes that are started after this
+#' function has been called.
+#' The child processes will then connect to the same Julia server if the
+#' variable is set.
+#' The variable can also be set explicitly in child processes before connecting
+#' to Julia to connect to a running server.
+#' Unsetting the variable will result in a normal Julia start-up in the first
+#' call to Julia, using a single-client Julia session.
+#'
+#' For security reasons, the Julia server accepts only connections
+#' from localhost.
+#'
+#' For using Julia with multiple clients, it can be good to advise Julia to
+#' use multiple threads via setting the \env{JULIA_NUM_THREADS} environment
+#' variable before starting Julia.
+#'
+#' @note The standard (error) output from Julia (printing and warnings)
+#' can currently only be forwarded to one client.
+#' This is currently the last client that has connected but this may be subject
+#' to change.
+#'
+#' @param port a hint for the port that is used by the server.
+#'    If it is not available, a different port is used.
+#'    The final port is returned (invisibly).
+#'
+#' @return the port number (invisibly)
+#'
+#' @seealso \link{JULIACONNECTOR_SERVER}
+#'
+#' @examples
+#' if (juliaSetupOk()) {
+#'
+#'    Sys.setenv("JULIA_NUM_THREADS" = parallel::detectCores())
+#'    startJuliaServer()
+#'
+#'    library(future)
+#'    plan(multisession) # use background R processes on the same machine
+#'
+#'    juliaEval("global x = 1")
+#'
+#'    # Child processes now use the same Julia session:
+#'    f1 <- future({juliaEval("x")})
+#'    value(f1)
+#'
+#'    plan(sequential) # close background workers
+#'
+#' }
+#' \dontshow{
+#' JuliaConnectoR:::stopJulia()
+#' }
+startJuliaServer <- function(port = 11980) {
+   if (!is.null(pkgLocal$con)) {
+      warning(paste0("There is already a connection to Julia established.\n",
+                     "Run \"stopJulia()\" to stop this connection ",
+                     "before running \"startJuliaServer()\"."))
+      return(invisible(NULL))
+   }
+
+   port <- runJuliaServer(port, multiclient = TRUE)
+   Sys.setenv("JULIACONNECTOR_SERVER" = paste0("localhost:", port))
+
+   # It is noted that Julia has been started to serve multiple clients.
+   # This can later be used for knowing that the environment variable
+   # JULIACONNECTOR_SERVER has become invalid and needs to be unset.
+   pkgLocal$startedAsMultiClientServer <- TRUE
+
+   # Establish and test the connection. This also sets the pkgLocal$communicator
+   juliaEval("0")
+   return(invisible(port))
+}
+
+
 # Starts a Julia process in the background that listens on a port.
 # A port hint is given by the argument "port".
 # The return value is the port where Julia is actually listening.
 # This port might be different than the port hint, if the given "port"
 # is e. g. already in use.
-runJuliaServer <- function(port = 11980) {
+runJuliaServer <- function(port = 11980, multiclient = TRUE) {
    message("Starting Julia ...")
 
    # If there is no Julia server specified, start a new one:
@@ -46,12 +150,21 @@ runJuliaServer <- function(port = 11980) {
    stdoutfile <- tempfile('stdout'); stderrfile <- tempfile('stderr')
    on.exit(unlink(c(stdoutfile, stderrfile)), add = TRUE)
 
+
+   if (multiclient == TRUE) {
+      multiclient <- "t"
+   } else {
+      multiclient <- "f"
+   }
+
    # start Julia server in background
    juliaexe <- getJuliaExecutablePath()
    system2(command = juliaexe,
-           args = c(shQuote(mainJuliaFile), port, shQuote(portfilename)),
+           args = c(shQuote(mainJuliaFile), port, shQuote(portfilename),
+                    multiclient),
            wait = FALSE,
-           stdout = stdoutfile, stderr = stderrfile)
+           stdout = stdoutfile, stderr = stderrfile,
+           env = getJuliaEnv())
 
    # get information about the real port from the temporary file
    sleepTime <- 0.2
@@ -93,7 +206,8 @@ juliaSetupOk <- function() {
 
    juliaVersion <- NULL
    try({
-      juliaVersion <- system2(juliaCmd, "--version", stdout = TRUE)
+      juliaVersion <- system2(juliaCmd, "--version", stdout = TRUE,
+                              env = getJuliaEnv())
    })
    if (is.null(juliaVersion)) {
       message("Julia could not be started")
@@ -117,6 +231,7 @@ startJulia <- function() {
    jlc <- juliaConnection()
    pkgLocal$con <- jlc$con
    pkgLocal$port <- jlc$port
+   pkgLocal$communicator <- juliaEval("RConnector.GetCommunicatoR()")
 }
 
 
@@ -148,7 +263,15 @@ getJuliaExecutablePath <- function() {
 }
 
 
+#' Stop the connection to Julia
+#'
+#' This ends the connection to Julia. Julia terminates if no R process is
+#' connected any more.
 stopJulia <- function() {
+   if (!is.null(pkgLocal$startedAsMultiClientServer)) {
+      Sys.unsetenv("JULIACONNECTOR_SERVER")
+      pkgLocal$startedAsMultiClientServer <- NULL
+   }
    if (!is.null(pkgLocal$con)) {
       tryCatch({
          writeBin(BYEBYE, pkgLocal$con)
@@ -156,6 +279,7 @@ stopJulia <- function() {
       }, error = function(e) {})
       pkgLocal$con <- NULL
       pkgLocal$port <- NULL
+      pkgLocal$communicator <- NULL
 
       # clean up references
       invisible(gc(verbose = FALSE))
@@ -205,7 +329,7 @@ killJuliaWindows <- function(juliaPort) {
    juliaPid <- substring(juliaLine,
                          regexpr("[0-9]+$", juliaLine))
    juliaPid <- as.integer(juliaPid)
-   if (length(juliaPid) == 1) {
+   if (length(juliaPid) == 1 && juliaPid != 0) {
       system2(command = "taskkill", args = paste("/F /PID", juliaPid),
               stdout = FALSE)
    }

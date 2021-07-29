@@ -82,8 +82,7 @@ registerCallback <- function(callback) {
 
 .onLoad <- function(libname, pkgname) {
    # register finalizer to stop Julia connection
-   parent <- parent.env(environment())
-   reg.finalizer(parent, finalize, onexit = TRUE)
+   reg.finalizer(pkgLocal, finalize, onexit = TRUE)
 }
 
 
@@ -172,7 +171,8 @@ releaseFinalizedRefs <- function() {
    if (!is.null(pkgLocal$finalizedRefs)) {
       try({
          callbackrefs <- doCallJulia("RConnector.decrefcounts",
-                     list(pkgLocal$finalizedRefs))
+                                     list(pkgLocal$communicator,
+                                          pkgLocal$finalizedRefs))
          rm(envir = pkgLocal$callbacks, list = callbackrefs)
       })
 
@@ -337,10 +337,11 @@ juliaGet <- function(x) {
 }
 
 juliaGet.JuliaProxy <- function(x) {
-   juliaCall("RConnector.full_translation!", TRUE)
+   juliaCall("RConnector.full_translation!", pkgLocal$communicator, TRUE)
    ret <- NULL
    tryCatch({ret <- juliaCall("identity", x)},
-       finally = {juliaCall("RConnector.full_translation!", FALSE)})
+       finally = {juliaCall("RConnector.full_translation!",
+                            pkgLocal$communicator, FALSE)})
    ret
 }
 

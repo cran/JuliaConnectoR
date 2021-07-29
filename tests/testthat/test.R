@@ -407,7 +407,8 @@ test_that("Mutable struct usable by reference", {
    refEcho <- NULL
    invisible(gc())
    juliaEval("1")
-   expect_false(juliaLet("haskey(RConnector.sharedheap, ref)", ref = ref))
+   expect_false(juliaLet("haskey(communicator.sharedheap, ref)", ref = ref,
+                         communicator = JuliaConnectoR:::pkgLocal$communicator))
 
    # Test behaviuor with juliaGet:
    # The reference must be attached
@@ -428,7 +429,8 @@ test_that("Immutable struct usable by reference and translated", {
    expect_equal(refEcho$x, 1)
    ref <- get("ref", jlRef)
    expect_equal(juliaGet(jlRef)$x, 1)
-   expect_false(juliaLet("haskey(RConnector.sharedheap, ref)", ref = ref))
+   expect_false(juliaLet("haskey(communicator.sharedheap, ref)", ref = ref,
+                         communicator = JuliaConnectoR:::pkgLocal$communicator))
    gc()
    juliaEval("1")
 })
@@ -980,6 +982,37 @@ test_that("Parametric types are imported", {
 })
 
 
+test_that("Starting and stopping Julia server" , {
+   stopJulia()
+   port <- startJuliaServer()
+   expect_match(Sys.getenv("JULIACONNECTOR_SERVER"), paste0("localhost:", port))
+
+   # starting the server twice should give a warning and not do anything
+   expect_warning(startJuliaServer())
+   expect_match(Sys.getenv("JULIACONNECTOR_SERVER"), paste0("localhost:", port))
+
+   # now the server should start successfully
+   expect_equal(juliaEval("1"), 1)
+
+   # set a variable in a separate process:
+   rPath <- file.path(R.home("bin"), "R")
+   if (Sys.info()["sysname"] == "Windows") {
+      rPath <- paste0(rPath, ".exe")
+   }
+   system2(rPath, c("-e", shQuote(
+      paste0("library(JuliaConnectoR); juliaEval('global x = 1')"))),
+      stdout = FALSE)
+
+   # check that variable is set in this Julia session,
+   # i.e. that the two R processes share the same Julia process
+   expect_equal(juliaEval("x"), 1)
+
+   stopJulia()
+   expect_equal(Sys.getenv("JULIACONNECTOR_SERVER"), "")
+   expect_null(JuliaConnectoR:::pkgLocal$con)
+})
+
+
 test_that("JULIACONNECTOR_SERVER environment variable and Killing Julia works", {
    # if JULIACONNECTOR_SERVER is used, the server must be started with
    # "keeprunning = true" to work.
@@ -987,7 +1020,8 @@ test_that("JULIACONNECTOR_SERVER environment variable and Killing Julia works", 
    JuliaConnectoR:::stopJulia()
    oldJuliaConnectorServer <- Sys.getenv("JULIACONNECTOR_SERVER")
    # start new JuliaConnectoR server
-   port <- JuliaConnectoR:::runJuliaServer(12980)
+   port <- JuliaConnectoR:::startJuliaServer(12980)
+   expect_match(Sys.getenv("JULIACONNECTOR_SERVER"), paste0("localhost:", port))
 
    # test with wrong variable
    Sys.setenv("JULIACONNECTOR_SERVER" = "wrong form")
@@ -1082,7 +1116,8 @@ test_that("Test BigInt: a Julia object with external pointers", {
    expect_equal(juliaCall("Float64", f), 2147483647)
 
    i1Ref <- attr(i1, "JLREF")$ref
-   expect_true(juliaLet("RConnector.sharedheap[ref].refcount > 0", ref = i1Ref))
+   expect_true(juliaLet("communicator.sharedheap[ref].refcount > 0",
+                        ref = i1Ref, communicator = pkgLocal$communicator))
    i1 <- NULL
    invisible(gc())
    juliaEval("1") # after one command, the references from R should be cleaned up
@@ -1093,7 +1128,8 @@ test_that("Test BigInt: a Julia object with external pointers", {
    juliaCall("GC.gc")
    juliaCall("GC.gc")
    juliaCall("GC.gc")
-   expect_false(juliaLet("haskey(RConnector.sharedheap, ref)", ref = i1Ref))
+   expect_false(juliaLet("haskey(communicator.sharedheap, ref)", ref = i1Ref,
+                         communicator = pkgLocal$communicator))
 })
 
 
@@ -1300,7 +1336,49 @@ test_that("Broadcasting via dot syntax works", {
 })
 
 
-test_that("Examples from README work", {
+test_that("Environemnt variables for Julia can be set", {
+   os <- Sys.info()['sysname']
+   # respect old ENV because julia 1.6 on Travis requires
+   # that the LD_LIBRARY_PATH is specified as environment variable
+   prevJuliaEnv <- Sys.getenv("JULIACONNECTOR_JULIAENV")
+
+   JuliaConnectoR:::stopJulia()
+
+   setTestEnv <- function(testEnv) {
+      if (prevJuliaEnv == "") {
+         Sys.setenv(JULIACONNECTOR_JULIAENV = testEnv)
+      } else {
+         Sys.setenv(JULIACONNECTOR_JULIAENV =
+                       paste(prevJuliaEnv, testEnv, sep = ";"))
+      }
+   }
+
+   setTestEnv("TESTVARIABLE1=1")
+   if (os == "Windows") {
+      expect_warning(juliaEval("1+1"))
+   } else {
+      expect_equal(juliaEval('ENV["TESTVARIABLE1"]'), "1")
+   }
+   JuliaConnectoR:::stopJulia()
+
+   setTestEnv("TESTVARIABLE1=1; TESTVARIABLE2='abc'")
+   if (os == "Windows") {
+      expect_warning(juliaEval("1+1"))
+   } else {
+      expect_equal(juliaEval('ENV["TESTVARIABLE1"]'), "1")
+      expect_equal(juliaEval('ENV["TESTVARIABLE2"]'), "abc")
+   }
+   JuliaConnectoR:::stopJulia()
+
+   if (prevJuliaEnv == "") {
+      Sys.unsetenv("JULIACONNECTOR_JULIAENV")
+   } else {
+      Sys.setenv(JULIACONNECTOR_JULIAENV = prevJuliaEnv)
+   }
+})
+
+
+test_that("Iris/Flux example from README works", {
    skip_on_cran()
    skip_if(Sys.info()["login"] %in% c("lenz", "Stefan Lenz", "selectstern"))
    cat("\nExecuting README examples...\n")
@@ -1308,7 +1386,7 @@ test_that("Examples from README work", {
    if (grepl("^1\\.0", juliaEval('string(VERSION)'))) {
       skip_on_travis()
    } else {
-      projectFolder <- "project_1_4"
+      projectFolder <- "project_1_6"
    }
 
    Pkg <- juliaImport("Pkg")
@@ -1320,15 +1398,15 @@ test_that("Examples from README work", {
    irisExampleJl <- system.file("examples", "iris-example", "iris-example.jl",
                                 package = "JuliaConnectoR", mustWork = TRUE)
    irisExampleJuliaCode <- readLines(irisExampleJl)
-   irisExampleJuliaCode <- sub("epochs <-.*", "epochs <- 5", irisExampleJuliaCode)
+   irisExampleJuliaCode <- sub("^epochs =.*", "epochs = 2", irisExampleJuliaCode)
    juliaEval(paste(irisExampleJuliaCode, collapse = "\n"))
    irisExampleR <- system.file("examples",  "iris-example", "iris-example.R",
                                package = "JuliaConnectoR", mustWork = TRUE)
    irisExampleRCode <- readLines(irisExampleR)
-   irisExampleRCode <- sub("epochs <-.*", "epochs <- 5", irisExampleRCode)
+   irisExampleRCode <- sub("epochs <-.*", "epochs <- 2", irisExampleRCode)
    scriptEnv <- new.env(emptyenv())
-   eval(parse(text = paste(irisExampleRCode, collapse = "\n")),
-        envir = scriptEnv)
+   suppressMessages(eval(parse(text = paste(irisExampleRCode, collapse = "\n")),
+                         envir = scriptEnv))
    # just test something
    expect_s3_class(scriptEnv$model, "JuliaProxy")
 

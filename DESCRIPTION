@@ -1,7 +1,7 @@
 Package: JuliaConnectoR
 Type: Package
 Title: A Functionally Oriented Interface for Integrating 'Julia' with R
-Version: 0.6.3
+Version: 1.0.0
 Author: Stefan Lenz [aut, cre] (<https://orcid.org/0000-0001-9135-1743>),
   Harald Binder [aut] (<https://orcid.org/0000-0002-5666-8662>)
 Maintainer: Stefan Lenz <stefan-m-lenz@web.de>
@@ -17,8 +17,8 @@ License: MIT + file LICENCE
 SystemRequirements: Julia >= 1.0
 Encoding: UTF-8
 RoxygenNote: 7.1.1
-Suggests: testthat (>= 2.1.0)
+Suggests: testthat (>= 2.1.0), future, parallel
 NeedsCompilation: no
-Packaged: 2021-03-27 09:39:35 UTC; Stefan Lenz
+Packaged: 2021-07-29 13:23:23 UTC; Stefan Lenz
 Repository: CRAN
-Date/Publication: 2021-03-27 23:40:19 UTC
+Date/Publication: 2021-07-29 14:20:02 UTC
