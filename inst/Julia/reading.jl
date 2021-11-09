@@ -2,9 +2,9 @@ struct Fail
    message::String
 end
 
-function Fail(msg, origex)
+function Fail(msg, origex, origex_backtrace)
    Fail(msg * "\nOriginal Julia error message:\n" *
-         sprint(showerror, origex, backtrace()))
+         sprint(showerror, origex, origex_backtrace))
 end
 
 
@@ -57,6 +57,31 @@ function replace_bitsequal(x, val, replacement)
 end
 
 
+# represents_na shall be equivalent to the R_IsNA function.
+# See https://github.com/wch/r-source/blob/502561df523f1dc0430dfe5862c6a174c7067b4f/src/main/arithmetic.c#L126-L137
+# and https://cran.r-project.org/doc/manuals/r-devel/R-data.html#Special-values
+# " [...] NA is represented by the NaN value with low-word 0x7a2 (1954 in decimal)."
+const magicnumber1954shifted = (UInt64(1954) << 32)
+function represents_na(x::Float64)
+   isnan(x) && (reinterpret(UInt64, x) << 32) == magicnumber1954shifted
+end
+
+# Returns true if there is a value in the array x that is a R NA value,
+# as is determined by the R_IsNA function.
+# Replaces all "dirty" NA values (i.e., values that are considered NA by R,
+# but are not bitwise equal to NA_real_ in R) with the exact value of NA_real_
+function any_na_normalize!(x::AbstractVector{Float64})
+   ret = false
+   for i in eachindex(x)
+      @inbounds if represents_na(x[i])
+         x[i] = R_NA_REAL
+         ret = true
+      end
+   end
+   ret
+end
+
+
 function read_attributes(communicator)
    nattributes = read_nattributes(communicator)
    attributes = Dict{String, Any}()
@@ -75,9 +100,10 @@ end
 
 function read_complexs_with_missings(communicator, n::Int)
    doublepairs = reinterpret(Float64, read_bin(communicator, 16*n))
+   any_nas_found = any_na_normalize!(doublepairs)
    ret = map(i -> Complex{Float64}(doublepairs[2*i - 1], doublepairs[2*i]), 1:n)
-   if any(isbitsequal(R_NA_COMPLEX), ret)
-      return replace_bitsequal(ret, R_NA_COMPLEX, missing)::Array{Union{Complex{Float64},Missing},1}
+   if any_nas_found
+      return replace_bitsequal(ret, R_NA_COMPLEX, missing)
    else
       return ret
    end
@@ -91,8 +117,8 @@ end
 
 function read_float64s_with_missings(communicator, n::Int)
    ret = read_float64s(communicator, n)
-   if any(isbitsequal(R_NA_REAL), ret)
-      return replace_bitsequal(ret, R_NA_REAL, missing)::Array{Union{Float64,Missing},1}
+   if any_na_normalize!(ret)
+      return replace_bitsequal(ret, R_NA_REAL, missing)
    else
       return ret
    end
@@ -225,7 +251,7 @@ function convert_reshape_element(element, attributes, dimensions)
          type = maineval(typestr)
          element = convert.(type, element)
       catch ex
-         return Fail("Conversion to type \"$typestr\" failed", ex)
+         return Fail("Conversion to type \"$typestr\" failed", ex, catch_backtrace())
       end
    end
    return reshape_element(element, dimensions)
@@ -252,7 +278,7 @@ function convert_reshape_raw(element, attributes, dimensions)
             return String(element)
          end
       catch ex
-         return Fail("Conversion to type \"$typestr\" failed", ex)
+         return Fail("Conversion to type \"$typestr\" failed", ex, catch_backtrace())
       end
    end
    return reshape_element(element, dimensions)
@@ -267,7 +293,7 @@ function convert_reshape_string(ret::Array{String}, attributes, dimensions)
             ret[i] = missing
          end
       catch ex
-         return Fail("Translating NAs failed", ex)
+         return Fail("Translating NAs failed", ex, catch_backtrace())
       end
    end
    return convert_reshape_element(ret, attributes, dimensions)
@@ -279,7 +305,7 @@ function read_expression(communicator)
    try
       return maineval(exprstr)
    catch ex
-      return Fail("Evaluation of \"$exprstr\" failed", ex)
+      return Fail("Evaluation of \"$exprstr\" failed", ex, catch_backtrace())
    end
 end
 
@@ -306,7 +332,7 @@ function read_list(communicator)
          namedelements[sym] = namedelement
          names[i] = sym
       catch ex
-         push!(fails, Fail("Ignored element with name $name", ex))
+         push!(fails, Fail("Ignored element with name $name", ex, catch_backtrace()))
       end
    end
 
@@ -352,7 +378,7 @@ function read_call(communicator, name::AbstractString)
    try
       fun::Union{Function, Type} = findfield(name)
    catch ex
-      push!(fails, Fail("Unable to identify function", ex))
+      push!(fails, Fail("Unable to identify function", ex, catch_backtrace()))
    end
    args = read_list(communicator)
    Call(fun, args, fails)

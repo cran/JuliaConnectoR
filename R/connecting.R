@@ -37,14 +37,20 @@ getJuliaEnv <- function() {
          envdef <- Sys.getenv("JULIACONNECTOR_JULIAENV")
          evalenv <- new.env(emptyenv())
          eval(expr = parse(text = envdef), envir = evalenv)
+         if (Sys.info()['sysname'] == "Linux" && is.null(evalenv$LD_LIBRARY_PATH)) {
+            evalenv$LD_LIBRARY_PATH <- "''"
+         }
          # system2 expects a character vector of name=value strings
          jlenv <- unlist(lapply(names(evalenv),
-                         function(x) { paste0(x, "=", evalenv[[x]]) }))
+                         function(x) { paste0(x, "=", shQuote(evalenv[[x]])) }))
+      }
+   } else { # no environment variables for Julia specified by user
+      if (Sys.info()['sysname'] == "Linux") {
+         jlenv <- "LD_LIBRARY_PATH=''"
       }
    }
    return(jlenv)
 }
-
 
 
 #' Start a Julia server that may serve multiple clients (R processes)
@@ -138,7 +144,10 @@ startJuliaServer <- function(port = 11980) {
 # This port might be different than the port hint, if the given "port"
 # is e. g. already in use.
 runJuliaServer <- function(port = 11980, multiclient = TRUE) {
-   message("Starting Julia ...")
+   startupOpts <- Sys.getenv('JULIACONNECTOR_JULIAOPTS')
+   optsMessage <- ifelse(startupOpts != '', paste0(' (with opts: ', startupOpts, ')'), '')
+
+   message("Starting Julia ...", optsMessage)
 
    # If there is no Julia server specified, start a new one:
    mainJuliaFile <- system.file("Julia", "main.jl",
@@ -159,8 +168,14 @@ runJuliaServer <- function(port = 11980, multiclient = TRUE) {
 
    # start Julia server in background
    juliaexe <- getJuliaExecutablePath()
+
+   if (startupOpts != '') {
+      # if startup options are specified, separate them from the arguments via "--"
+      startupOpts <- paste(startupOpts, '-- ')
+   }
+
    system2(command = juliaexe,
-           args = c(shQuote(mainJuliaFile), port, shQuote(portfilename),
+           args = c(startupOpts, shQuote(mainJuliaFile), port, shQuote(portfilename),
                     multiclient),
            wait = FALSE,
            stdout = stdoutfile, stderr = stderrfile,
@@ -273,10 +288,8 @@ stopJulia <- function() {
       pkgLocal$startedAsMultiClientServer <- NULL
    }
    if (!is.null(pkgLocal$con)) {
-      tryCatch({
-         writeBin(BYEBYE, pkgLocal$con)
-         close(pkgLocal$con)
-      }, error = function(e) {})
+      tryCatch({writeBin(BYEBYE, pkgLocal$con)}, error = function(e) {})
+      tryCatch({close(pkgLocal$con)}, error = function(e) {})
       pkgLocal$con <- NULL
       pkgLocal$port <- NULL
       pkgLocal$communicator <- NULL

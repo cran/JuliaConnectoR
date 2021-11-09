@@ -450,15 +450,9 @@ handleCallbacksAndOutput <- function() {
       if (messageType == CALL_INDICATOR) {
          call <- readCall()
          callbackfun <- get(call$name, pkgLocal$callbacks)
-         callbackSuccess <- FALSE
-         tryCatch({
-            answerCallback(callbackfun, call$args)
-            callbackSuccess <- TRUE
-            }, error = function(e) {
-               writeFailMessage(as.character(e))
-            })
+         callbackSuccess <- answerCallback(callbackfun, call$args)
          if (!callbackSuccess) {
-            return(readMessageType())
+            return(readMessageType()) # read answer to fail message
          }
       } else if (messageType == STDOUT_INDICATOR) {
          readOutput(writeTo = stdout())
@@ -475,8 +469,17 @@ handleCallbacksAndOutput <- function() {
 
 
 answerCallback <- function(fun, args) {
-   ret <- do.call(fun, args)
-   writeResultMessage(ret)
+   callbackSuccess <- FALSE
+   # Execute call. Send a fail message to Julia
+   # if the call in R resulted in an error
+   tryCatch({
+      result <- do.call(fun, args)
+      callbackSuccess <- TRUE
+      }, error = function(e) {writeFailMessage(as.character(e))})
+   if (callbackSuccess) {
+      writeResultMessage(result)
+   }
+   return(callbackSuccess)
 }
 
 
@@ -484,7 +487,8 @@ juliaHeapReference <- function(ref) {
    ret <- new.env(emptyenv())
    ret$ref <- ref
    reg.finalizer(ret, function(e) {
-      # remove reference (see releaseFinalizedRefs)
+      # add reference to references that are to be removed later
+      # via releaseFinalizedRefs
       pkgLocal$finalizedRefs <- c(pkgLocal$finalizedRefs, get("ref", e))
    })
    ret

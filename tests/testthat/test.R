@@ -228,6 +228,28 @@ test_that("Echo: Double vector with missing values", {
 })
 
 
+test_that("Dirty missing values are recognized", {
+   dirtyNa <- c(as.raw(0xa2), as.raw(0x07), as.raw(0x00), as.raw(0x00),
+                as.raw(0x00), as.raw(0x00), as.raw(0xf8), as.raw(0x7f))
+   dirtyNA <- readBin(dirtyNa, what = "double", endian = "little")
+   expect_true(is.na(dirtyNA) && !is.nan(dirtyNA))
+   expect_true(juliaCall("ismissing", dirtyNA))
+   expect_true(juliaLet("ismissing(x[2])", x = c(1, dirtyNA)))
+   echoDirtyNA <- juliaEcho(dirtyNA)
+   expect_true(is.na(echoDirtyNA) && ! is.nan(echoDirtyNA))
+   dirtyComplexNA <- complex(real = dirtyNA, imaginary = dirtyNA)
+   expect_true(is.na(dirtyComplexNA) && !is.nan(dirtyComplexNA))
+   expect_true(juliaCall("ismissing", dirtyComplexNA))
+   x <- c(1+1i, dirtyComplexNA, NA)
+   expect_true(juliaLet("ismissing(x[2]) && ismissing(x[3])", x = x))
+   testEcho(x)
+   # The following doesn't work: dirtNA coerced to NA+0i, not NA+NA*i:
+   # expect_true(juliaLet("ismissing(x[2])", x = c(1+1i, dirtyNA)))
+   echoDirtyComplexNA <- juliaEcho(dirtyComplexNA)
+   expect_true(is.na(echoDirtyComplexNA) && !is.nan(echoDirtyComplexNA))
+})
+
+
 test_that("NaN and NA are handled differently", {
    # NaN in R is translated to a NaN Float64 value in Julia
    # NA in R is translated to a missing value in Julia
@@ -251,6 +273,8 @@ test_that("NaN and NA are handled differently", {
                 juliaEval("Array{Union{Complex{Float64},Missing},1}"))
    expect_equal(juliaCall("typeof", c(1+1i, NaN)),
                 juliaEval("Array{Complex{Float64},1}"))
+
+   expect_true(juliaLet("ismissing(x[2])", x = c(1+1i, NA)))
 })
 
 
@@ -1013,6 +1037,37 @@ test_that("Starting and stopping Julia server" , {
 })
 
 
+test_that("Julia startup options can be modified", {
+   stopJulia()
+   oldJuliaOpts <- Sys.getenv("JULIACONNECTOR_JULIAOPTS")
+
+   # set project directory via startup opts
+   projectPathWithSpaces <- file.path(tempdir(), "Dirname with Spaces")
+   dir.create(file.path(tempdir(), "Dirname with Spaces"))
+   specifyProjectOpts <- paste0('--project="', projectPathWithSpaces, '"')
+   Sys.setenv("JULIACONNECTOR_JULIAOPTS" = paste0('--project="',
+                                                  projectPathWithSpaces, '"'))
+   expect_match(capture.output({juliaEval("import Pkg; Pkg.status()")}),
+                regexp = "Dirname with Spaces", fixed = TRUE, all = FALSE)
+   stopJulia()
+
+   # set two startup opts: project directory and deprecation warnings
+   Sys.setenv("JULIACONNECTOR_JULIAOPTS" = paste(specifyProjectOpts,
+                                                "--depwarn=no"))
+   juliaDepWarn <- 'Base.depwarn("there is a deprecation warning", :foo)'
+   expect_length(capture.output({juliaEval(juliaDepWarn)}), 0)
+   stopJulia()
+
+   # clean up
+   unlink(projectPathWithSpaces, recursive = TRUE)
+   if (oldJuliaOpts == '') {
+      Sys.unsetenv("JULIACONNECTOR_JULIAOPTS")
+   } else {
+      Sys.setenv("JULIACONNECTOR_JULIAOPTS" = oldJuliaOpts)
+   }
+})
+
+
 test_that("JULIACONNECTOR_SERVER environment variable and Killing Julia works", {
    # if JULIACONNECTOR_SERVER is used, the server must be started with
    # "keeprunning = true" to work.
@@ -1298,14 +1353,14 @@ test_that("Data frame can be translated", {
 
    juliaEval('import Pkg;
               try
-                 @eval import JuliaDB
+                 @eval import IndexedTables
               catch ex
-                 Pkg.add("JuliaDB")
+                 Pkg.add("IndexedTables")
               end
-              import JuliaDB')
+              import IndexedTables')
    x <- data.frame(x = c(0, 2, 4), y = c("bla", "blup", "ha"),
                    stringsAsFactors = FALSE)
-   y <- juliaCall("JuliaDB.table", x)
+   y <- juliaCall("IndexedTables.table", x)
    expect_equal(as.data.frame(x), x)
 })
 
@@ -1337,23 +1392,13 @@ test_that("Broadcasting via dot syntax works", {
 
 
 test_that("Environemnt variables for Julia can be set", {
+   # prepare
    os <- Sys.info()['sysname']
-   # respect old ENV because julia 1.6 on Travis requires
-   # that the LD_LIBRARY_PATH is specified as environment variable
-   prevJuliaEnv <- Sys.getenv("JULIACONNECTOR_JULIAENV")
-
+   oldJuliaEnv <- Sys.getenv("JULIACONNECTOR_JULIAENV")
    JuliaConnectoR:::stopJulia()
 
-   setTestEnv <- function(testEnv) {
-      if (prevJuliaEnv == "") {
-         Sys.setenv(JULIACONNECTOR_JULIAENV = testEnv)
-      } else {
-         Sys.setenv(JULIACONNECTOR_JULIAENV =
-                       paste(prevJuliaEnv, testEnv, sep = ";"))
-      }
-   }
-
-   setTestEnv("TESTVARIABLE1=1")
+   # Test with one variable
+   Sys.setenv(JULIACONNECTOR_JULIAENV = "TESTVARIABLE1=1")
    if (os == "Windows") {
       expect_warning(juliaEval("1+1"))
    } else {
@@ -1361,7 +1406,8 @@ test_that("Environemnt variables for Julia can be set", {
    }
    JuliaConnectoR:::stopJulia()
 
-   setTestEnv("TESTVARIABLE1=1; TESTVARIABLE2='abc'")
+   # Test with two variables
+   Sys.setenv(JULIACONNECTOR_JULIAENV = "TESTVARIABLE1=1; TESTVARIABLE2='abc'")
    if (os == "Windows") {
       expect_warning(juliaEval("1+1"))
    } else {
@@ -1370,10 +1416,17 @@ test_that("Environemnt variables for Julia can be set", {
    }
    JuliaConnectoR:::stopJulia()
 
-   if (prevJuliaEnv == "") {
+   # LD_LIBRARY_PATH can be set via JULIACONNECTOR_JULIAENV
+   Sys.setenv(JULIACONNECTOR_JULIAENV = "LD_LIBRARY_PATH='abc'")
+   if (os == "Linux") {
+      expect_match(JuliaConnectoR:::getJuliaEnv(), "LD_LIBRARY_PATH='abc'")
+   }
+
+   # clean up
+   if (oldJuliaEnv == "") {
       Sys.unsetenv("JULIACONNECTOR_JULIAENV")
    } else {
-      Sys.setenv(JULIACONNECTOR_JULIAENV = prevJuliaEnv)
+      Sys.setenv(JULIACONNECTOR_JULIAENV = oldJuliaEnv)
    }
 })
 
@@ -1426,7 +1479,7 @@ test_that("Boltzmann example from README works", {
             try
                @eval import BoltzmannMachines
             catch ex
-               Pkg.add(PackageSpec(name = "BoltzmannMachines", version = v"1.2"))
+               Pkg.add(PackageSpec(name = "BoltzmannMachines", version = v"1.3"))
             end')
    boltzmannExampleR <- system.file("examples", "boltzmann-example.R",
                                      package = "JuliaConnectoR", mustWork = TRUE)

@@ -48,13 +48,13 @@ function evaluate_checked!(call::Call, communicator::CommunicatoR)
    try
       parsingcheck(call)
    catch ex
-      return Fail("Parsing in Julia failed.", ex)
+      return Fail("Parsing in Julia failed.", ex, catch_backtrace())
    end
 
    try
       return evaluate!(call, communicator)
    catch ex
-      return Fail("Evaluation in Julia failed.", ex)
+      return Fail("Evaluation in Julia failed.", ex, catch_backtrace())
    end
 end
 
@@ -122,7 +122,7 @@ function evaluate!(objref::ObjectReference, communicator::CommunicatoR)
    getobj(obj) = obj
 
    try
-      obj = communicator.sharedheap[objref.ref].obj
+      obj = sharedheapget(communicator, objref)
       return getobj(obj)
    catch ex
       error("Object reference " * string(objref.ref, base = 16) *

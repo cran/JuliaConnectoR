@@ -10,9 +10,37 @@ mutable struct CallbackFinalizer
 end
 
 function finalize_callback(cb::CallbackFinalizer)
-   delete!(cb.communicator.registered_callbacks, cb.f)
-   push!(cb.communicator.finalized_callbacks, cb.id)
+   lock(cb.communicator.callbacks_lock)
+   try
+      delete!(cb.communicator.registered_callbacks, cb.f)
+      push!(cb.communicator.finalized_callbacks, cb.id)
+   finally
+      unlock(cb.communicator.callbacks_lock)
+   end
 end
+
+
+function register_callback(communicator::CommunicatoR, f::Function, callbackid::String)
+   lock(communicator.callbacks_lock)
+   try
+      communicator.registered_callbacks[f] = callbackid
+   finally
+      unlock(communicator.callbacks_lock)
+   end
+end
+
+
+function funtocallbackid(communicator::CommunicatoR, f::Function)
+   callbackid = ""
+   lock(communicator.callbacks_lock)
+   try
+      callbackid = get(communicator.registered_callbacks, f, "")
+   finally
+      unlock(communicator.callbacks_lock)
+   end
+   callbackid
+end
+
 
 function CallbackFinalizer(id::String, communicator::CommunicatoR)
    f = identity # any function does the job
@@ -34,6 +62,18 @@ function full_translation!(communicator::CommunicatoR, mode::Bool)
 end
 
 
+function sharedheapget(communicator::CommunicatoR, ref::UInt64)
+   lock(communicator.sharedheap_lock)
+   ret = communicator.sharedheap[ref].obj
+   unlock(communicator.sharedheap_lock)
+   ret
+end
+
+function sharedheapget(communicator::CommunicatoR, objref::ObjectReference)
+   sharedheapget(communicator, objref.ref)
+end
+
+
 mutable struct ImmutableObjectReference
    obj::Any
 end
@@ -46,10 +86,15 @@ end
 
 function share_mutable_object!(communicator, obj)
    ref = object_reference(obj)
-   if haskey(communicator.sharedheap, ref)
-      communicator.sharedheap[ref].refcount += 1
-   else
-      communicator.sharedheap[ref] = SharedObject(obj)
+   lock(communicator.sharedheap_lock)
+   try
+      if haskey(communicator.sharedheap, ref)
+         communicator.sharedheap[ref].refcount += 1
+      else
+         communicator.sharedheap[ref] = SharedObject(obj)
+      end
+   finally
+      unlock(communicator.sharedheap_lock)
    end
    ref
 end
@@ -59,7 +104,12 @@ function share_immutable_object!(communicator, obj)
    obj2 = ImmutableObjectReference(obj)
    ref = object_reference(obj2)
    # the object is newly created and cannot exists already
-   communicator.sharedheap[ref] = SharedObject(obj2)
+   lock(communicator.sharedheap_lock)
+   try
+      communicator.sharedheap[ref] = SharedObject(obj2)
+   finally
+      unlock(communicator.sharedheap_lock)
+   end
    ref
 end
 
@@ -79,11 +129,16 @@ end
 
 
 function decrefcount!(communicator::CommunicatoR, ref::UInt64)
-   newrefcount = communicator.sharedheap[ref].refcount - 1
-   if newrefcount == 0
-      delete!(communicator.sharedheap, ref)
-   else
-      communicator.sharedheap[ref].refcount = newrefcount
+   lock(communicator.sharedheap_lock)
+   try
+      newrefcount = communicator.sharedheap[ref].refcount - 1
+      if newrefcount == 0
+         delete!(communicator.sharedheap, ref)
+      else
+         communicator.sharedheap[ref].refcount = newrefcount
+      end
+   finally
+      unlock(communicator.sharedheap_lock)
    end
 end
 
@@ -92,9 +147,12 @@ function decrefcounts(communicator::CommunicatoR, refs::Vector{UInt8})
       decrefcount!(communicator, ref)
    end
 
-   # return finalized callbacks
+   # return finalized callbacks and clear list
+   lock(communicator.callbacks_lock)
    ret = deepcopy(communicator.finalized_callbacks)
    empty!(communicator.finalized_callbacks)
+   unlock(communicator.callbacks_lock)
+
    ret
 end
 
@@ -104,12 +162,17 @@ function sharedfinalizer(communicator::CommunicatoR, newobj, oldobjref::UInt64)
    # it must reference the original object such that this one lives on.
    # It must be prevented that the old object is garbage collected because
    # this might finalize resources that are needed for the copy to work.
-   if haskey(communicator.sharedheap, oldobjref)
-      communicator.sharedheap[oldobjref].refcount += 1
-      finalizer(obj -> decrefcount!(communicator, oldobjref), newobj)
-   else
-      @warn "Please be sure that the revived objects " *
-            "do not contain external references."
+   lock(communicator.sharedheap_lock)
+   try
+      if haskey(communicator.sharedheap, oldobjref)
+         communicator.sharedheap[oldobjref].refcount += 1
+         finalizer(obj -> decrefcount!(communicator, oldobjref), newobj)
+      else
+         @warn "Please be sure that the revived objects " *
+               "do not contain external references."
+      end
+   finally
+      unlock(communicator.sharedheap_lock)
    end
 end
 
