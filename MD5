@@ -1,4 +1,4 @@
-2274d9cbfe1575a46b5ac449f34fb9b5 *DESCRIPTION
+152cd9bc056dd61d57f72d1f557e8a4a *DESCRIPTION
 0707d0505e08a5a3f415901cb7c0d71e *LICENCE
 7111596c47a437441d969025d3b4be50 *NAMESPACE
 928ac8d16f0788ad4c3d0d834834716a *R/JuliaConnectoR-package.R
@@ -9,7 +9,7 @@ f77b47889062dbe04852d727f49d75bd *R/connecting.R
 4b6fea003e2fd20a023c685c0d5234e0 *R/main.R
 c12a755157cfa9fef3cb23c682fcb5c8 *R/reading.R
 5e0d5bb5ba97c7d7111b557ff60c6c21 *R/writing.R
-c7fced29c445a7ac4761787895641ed1 *inst/CITATION
+e6622aec4c1e613570c0f3ff57bb318d *inst/CITATION
 c260d26cca2a6b98d284061cedfa8bbc *inst/Julia/RConnector.jl
 cde6ed63f4ffa37d4c94f8f51a0a065b *inst/Julia/accessing_mutating.jl
 4d4b333839575c06eaaadf1a78fdedf1 *inst/Julia/communicating.jl
