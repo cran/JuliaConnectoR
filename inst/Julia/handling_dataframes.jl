@@ -48,8 +48,12 @@ function r_compatible_type(t::Type{Missing})
    Missing
 end
 
-function r_compatible_type(t::Type{Union{Missing, T}}) where T
+function r_compatible_type(t::Type{Union{Missing, T}}) where T <: Union{Number, Bool, Char, AbstractString}
    Union{Missing, r_compatible_type(T)}
+end
+
+function r_compatible_type(t::Type{T}) where T <: Any
+   error("Column type \"$(T)\" cannot be translated to a type that can be used in an R data frame")
 end
 
 function convert_to_r_compatible_type(x::AbstractArray{T}) where T
@@ -57,23 +61,26 @@ function convert_to_r_compatible_type(x::AbstractArray{T}) where T
 end
 
 
+"""
+Convert an object implementing the Tables.jl interface to an RDataFrame object
+"""
 function get_df(obj)
    coldict = Dict{Symbol, Any}()
    attributes = Dict{String, Any}()
    cols = columns(obj)
    colnames = columnnames(cols)
    for col in columnnames(cols)
-      coldict[col] = convert_to_r_compatible_type(getcolumn(cols, col))
+      coldict[Symbol(col)] = convert_to_r_compatible_type(getcolumn(cols, col))
    end
-   colnamesarr = collect(colnames)
-   
+   colnamesarr = Symbol.(collect(colnames))
+
    if length(colnamesarr) > 0
       allsame(x) = all(y -> y == first(x), x)
       if !allsame(map(length, values(coldict)))
          error("Lengths of columns not equal")
       end
    end
-   
+
    RDataFrame(ElementList([], colnamesarr, coldict, attributes))
 end
 

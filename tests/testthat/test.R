@@ -1351,17 +1351,33 @@ test_that("Data frame can be translated", {
 
    testEcho(data.frame())
 
-   juliaEval('import Pkg;
-              try
-                 @eval import IndexedTables
-              catch ex
-                 Pkg.add("IndexedTables")
-              end
-              import IndexedTables')
+   Pkg <- juliaImport("Pkg")
+   if (juliaEval('VERSION < v"1.6"')) {
+      subproject <- "1_0"
+   } else {
+      subproject <- "1_6"
+   }
+   Pkg$activate(system.file("examples", "IndexedTables-Project", subproject,
+                            package = "JuliaConnectoR"))
+   Pkg$instantiate()
+   juliaEval("import IndexedTables")
    x <- data.frame(x = c(0, 2, 4), y = c("bla", "blup", "ha"),
                    stringsAsFactors = FALSE)
    y <- juliaCall("IndexedTables.table", x)
    expect_equal(as.data.frame(x), x)
+
+   # Works also without column names (Issue #16)
+   df <- juliaCall("IndexedTables.table", 1:3, 11:13)
+   df <- as.data.frame(df)
+   expect_equal(df[, 1], 1:3)
+   expect_equal(df[, 2], 11:13)
+})
+
+
+test_that("Attempt to translate Julia Table with incompatible types results in proper error", {
+   juliaEval("import IndexedTables")
+   x <- juliaEval('IndexedTables.table(["a", 1, 2], [1,2,3])')
+   expect_error(as.data.frame(x), regexp = 'Column type "Any" cannot be translated')
 })
 
 
@@ -1433,16 +1449,17 @@ test_that("Environemnt variables for Julia can be set", {
 
 test_that("Iris/Flux example from README works", {
    skip_on_cran()
-   skip_if(Sys.info()["login"] %in% c("lenz", "Stefan Lenz", "selectstern"))
+   skip_on_covr()
+   #skip_if(Sys.info()["login"] %in% c("lenz", "Stefan Lenz", "selectstern", "lenzstef"))
    cat("\nExecuting README examples...\n")
 
-   if (grepl("^1\\.0", juliaEval('string(VERSION)'))) {
-      skip_on_travis()
+   if (juliaEval('VERSION < v"1.9"')) {
+      skip("Skip Flux example because Julia version is too old")
    } else {
-      projectFolder <- "project_1_6"
+      projectFolder <- "project_1_9"
    }
 
-   Pkg <- juliaImport("Pkg")
+      Pkg <- juliaImport("Pkg")
    Pkg$activate(system.file("examples", "iris-example", projectFolder,
                             package = "JuliaConnectoR", mustWork = TRUE))
    Pkg$instantiate()
@@ -1451,17 +1468,20 @@ test_that("Iris/Flux example from README works", {
    irisExampleJl <- system.file("examples", "iris-example", "iris-example.jl",
                                 package = "JuliaConnectoR", mustWork = TRUE)
    irisExampleJuliaCode <- readLines(irisExampleJl)
-   irisExampleJuliaCode <- sub("^epochs =.*", "epochs = 2", irisExampleJuliaCode)
    juliaEval(paste(irisExampleJuliaCode, collapse = "\n"))
+   expect_true(juliaEval("accuracy(model, testdata) > 0.9"))
+
    irisExampleR <- system.file("examples",  "iris-example", "iris-example.R",
                                package = "JuliaConnectoR", mustWork = TRUE)
    irisExampleRCode <- readLines(irisExampleR)
-   irisExampleRCode <- sub("epochs <-.*", "epochs <- 2", irisExampleRCode)
+
    scriptEnv <- new.env(emptyenv())
-   suppressMessages(eval(parse(text = paste(irisExampleRCode, collapse = "\n")),
+   suppressWarnings(eval(parse(text = paste(irisExampleRCode, collapse = "\n")),
                          envir = scriptEnv))
-   # just test something
-   expect_s3_class(scriptEnv$model, "JuliaProxy")
+
+   # Test that training the model worked
+   print(juliaCall("accuracy", scriptEnv$model, scriptEnv$testdata))
+   expect_true(juliaCall("accuracy", scriptEnv$model, scriptEnv$testdata) > 0.9)
 
    Pkg$activate() # use default environment again
 })
@@ -1469,6 +1489,7 @@ test_that("Iris/Flux example from README works", {
 
 
 test_that("Boltzmann example from README works", {
+   skip_on_cran()
    returningError <- function(x) {
       paste0("tryCatch({", x , '},',
              'error = function(e) { paste("e: ",e$message) },',
