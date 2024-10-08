@@ -25,14 +25,14 @@
 #' @section Setup:
 #' The package requires that
 #' \href{https://julialang.org/downloads/}{Julia (Version \eqn{\geq}{>=} 1.0) is installed}
-#' and that the Julia executable is in the system search \env{PATH} or that the
-#' \env{JULIA_BINDIR} environment variable is set to the \code{bin} directory of
+#' separately from the package.
+#' The Julia installation is discovered via the system search \env{PATH} or the
+#' \env{JULIA_BINDIR} environment variable, which can be set to the \code{bin} directory of
 #' the Julia installation.
-#' If the \env{JULIA_BINDIR} variable is set, it takes precedence over
-#' looking in the executable path.
-#' By setting the \env{JULIA_BINDIR} variable before starting Julia,
-#' it is therefore possible to use different installations of Julia on the
-#' same machine without having to change the executable path.
+#' If Julia is installed via the Julia installation manager \code{juliaup},
+#' it should be discovered without requiring more configuration.
+#' For more details about the setup,
+#' see \code{\link{Julia-Setup}}.
 #'
 #'
 #' @section Function overview:
@@ -189,10 +189,8 @@
 #' if code should be portable across different platforms.
 #' }
 #'
-#'
-#' @docType package
 #' @name JuliaConnectoR-package
-NULL
+"_PACKAGE"
 
 
 #' Environment variables used by the \pkg{JuliaConnectoR}
@@ -206,10 +204,12 @@ NULL
 #'
 #' The environment variables that are used in the package are listed below:
 #' \describe{
-#' \item{\env{JULIA_BINDIR}:}{The directory where the \code{bin} directory of
-#'   the Julia can be specified explicitly. This allows, e.g., to easily work
-#'   with different Julia versions without having to modify the system
-#'   \env{PATH}.}
+#' \item{\env{JULIA_BINDIR}:}{If this variable is set to the path of the Julia \code{bin} directory
+#'   before connecting to Julia, the corresponding Julia installation will be used.
+#'   By using this variable, it is possible to use a different Julia version
+#'   than the one in the system \env{PATH}.
+#'   (You can find the correct path to the \code{bin} directory
+#'   of Julia by evaluating the expression \code{Sys.BINDIR} within Julia.)}
 #' \item{\env{JULIACONNECTOR_JULIAENV}:}{Specify environment variables only for
 #'    Julia.
 #'    (This does not work on Windows and the variable is ignored there.)
@@ -240,3 +240,46 @@ NULL
 #' @name EnvVars-JuliaConnectoR
 NULL
 
+
+#' Julia setup
+#'
+#' Julia must be installed separately in order for the \pkg{JuliaConnectoR} package to work.
+#' You can download and install Julia from \href{https://julialang.org/downloads/}{https://julialang.org/downloads/}.
+#'
+#' \subsection{Setup via the Juliaup installation manager}{
+#' If you have installed Julia via Juliaup,
+#' the Julia installation should be discovered by the \pkg{JuliaConnectoR}.
+#' }
+#'
+#' \subsection{Juliaup on Windows}{
+#' If you have freshly installed Juliaup, start Julia once on the command line.
+#' This will do the actual installation of the current Julia version.
+#' Juliaup puts the Julia executable on the system \env{PATH}.
+#' This way, the Julia installation can be detected by the \pkg{JuliaConnectoR}.
+#' }
+#'
+#' \subsection{Juliaup on Mac}{
+#' After the installation of Juliaup, Julia might not be on the system \env{PATH}
+#' but it should be discovered automatically
+#' if it is installed in the default location, i.e., the \code{.juliaup}
+#' folder in your home directory.
+#' }
+#'
+#' \subsection{Setup via Julia binaries}{
+#' If you have installed Julia via a binary package or any other method,
+#' the simplest way to make Julia discoverable is by adding the directory
+#' containing the Julia executable to the \env{PATH} environment variable.
+#'
+#' Alternatively, you can set the \env{JULIA_BINDIR} environment variable
+#' to specify the exact directory containing the Julia binary.
+#' (You can find the correct path to this directory by evaluating the expression
+#' \code{Sys.BINDIR} within Julia.)
+#'
+#' If the \env{JULIA_BINDIR} variable is set, it takes precedence over
+#' looking up the system \env{PATH}.
+#' This makes it easy to use a different Julia version
+#' than the one in your system \env{PATH}.
+#' }
+#'
+#' @name Julia-Setup
+NULL
